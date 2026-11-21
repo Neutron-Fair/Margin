@@ -86,6 +86,50 @@ export default function App() {
     document.body.dataset.panelState = panel ? (panelClosing ? 'closing' : 'open') : 'closed';
   }, [panel, panelClosing]);
 
+  /*
+   * 面板打开时冻结背后页面的滚动。
+   * 不放 overflow:hidden 到 body——那会让滚动位置被夹紧、关闭再还原，看着像跳一下。
+   * 改成在 wheel 上判断：面板内部还能滚就放行，滚到边界或压根不在面板里就拦掉，
+   * 滚轮 / 触摸板 / 键盘翻页都不会再带动主界面。
+   */
+  useEffect(() => {
+    if (!panel) return;
+    const scrollerOf = (node: EventTarget | null): HTMLElement | null => {
+      let el = node instanceof Element ? node : null;
+      while (el && el !== document.body) {
+        const style = getComputedStyle(el);
+        if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1) {
+          return el as HTMLElement;
+        }
+        el = el.parentElement;
+      }
+      return null;
+    };
+    const onWheel = (e: WheelEvent) => {
+      const scroller = scrollerOf(e.target);
+      if (!scroller) {
+        e.preventDefault();
+        return;
+      }
+      const atTop = scroller.scrollTop <= 0 && e.deltaY < 0;
+      const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1 && e.deltaY > 0;
+      if (atTop || atBottom) e.preventDefault();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      const keys = ['PageUp', 'PageDown', 'Home', 'End', ' ', 'ArrowUp', 'ArrowDown'];
+      if (!keys.includes(e.key)) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (!scrollerOf(e.target)) e.preventDefault();
+    };
+    window.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [panel]);
+
   useEffect(
     () => () => {
       if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
@@ -298,6 +342,9 @@ export default function App() {
             </button>
             <button type="button" className="btn btn-ghost" onClick={() => openPanel('settings')}>
               设置
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => openPanel('tools')}>
+              更多
             </button>
             <button type="button" className="btn" onClick={doReset}>
               重置

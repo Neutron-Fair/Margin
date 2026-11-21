@@ -547,10 +547,18 @@
 }
 
 /* ————————————————— 弹层 ————————————————— */
+
+/*
+ * 面板打开时要冻结背后页面。
+ * 这里不锁 body 的 overflow：那样浏览器会立刻夹紧滚动位置，关闭再还原，
+ * 用户能看到主界面跳一下。改为 JS 在 wheel 上拦截（见 App.tsx frozenScroll）。
+ * 下面的 overscroll-behavior 是双保险，挡住滚动链。
+ */
 .overlay {
   position: fixed;
   inset: 0;
   z-index: 60;
+  overscroll-behavior: contain;
   background: rgba(42, 42, 40, 0.28);
   backdrop-filter: blur(2px);
   display: flex;
@@ -646,6 +654,7 @@ body[data-panel-state='closing'] .sheet {
 .sheet-body {
   padding: 18px 20px 22px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .sheet-foot {
