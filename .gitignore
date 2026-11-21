@@ -1,0 +1,30 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+release/
+交付/
+
+# OCR 引擎二进制（由 npm run prepare:assets 从 node_modules 复制）
+public/tess/
+
+# 测试与探针产物
+tools/probe-report*.json
+tools/shot/
+
+# Android 构建产物
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+# cap sync 生成的 web 资源副本
+android/app/src/main/assets/public/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

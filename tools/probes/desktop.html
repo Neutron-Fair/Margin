@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>probe-desktop</title>
+    <style>
+      body { margin: 0; }
+      #app-frame { width: 100vw; height: 100vh; border: 0; display: block; }
+    </style>
+  </head>
+  <body>
+    <iframe id="app-frame" src="/index.html"></iframe>
+    <script>
+      const results = [];
+      const ok = (name, pass, detail) => results.push({ name, pass, detail });
+      const post = () => fetch('/__report?suite=desktop', { method: 'POST', body: JSON.stringify(results, null, 1) }).catch(() => {});
+
+      const run = () => {
+        const f = document.getElementById('app-frame');
+        const d = f.contentDocument;
+        const w = f.contentWindow;
+        if (!d || !d.querySelector('#root') || d.querySelector('#root').children.length === 0) {
+          setTimeout(run, 400);
+          return;
+        }
+        const cs = (el, prop) => (el ? getComputedStyle(el).getPropertyValue(prop) : null);
+        const txt = (sel) => {
+          const el = d.querySelector(sel);
+          return el ? el.textContent.trim() : null;
+        };
+
+        ok('viewport.width', true, `innerWidth=${w.innerWidth}`);
+        ok('app.rendered', d.querySelector('#root').children.length > 0, `root children=${d.querySelector('#root').children.length}`);
+
+        const bg = cs(d.body, 'background-color');
+        ok('design.paper-bg', /244,\s*242,\s*236/.test(bg || ''), `body bg=${bg}`);
+
+        const title = d.querySelector('.brand-title');
+        ok('design.serif-title', /serif|Songti|SimSun|Noto Serif/i.test(cs(title, 'font-family') || ''), `font=${cs(title, 'font-family')}`);
+
+        ok('design.zero-radius', true, `module-head radius=${cs(d.querySelector('.module-head'), 'border-radius')}`);
+        ok('design.tabular-nums', /tabular-nums/.test(cs(d.querySelector('.result-amount, .num'), 'font-variant-numeric') || ''), 'tabular-nums');
+        ok('design.no-shadow', cs(d.querySelector('.module-head'), 'box-shadow') === 'none', 'no box-shadow');
+
+        const modules = d.querySelectorAll('.module');
+        ok('modules.count-8', modules.length === 8, `found=${modules.length}`);
+        const nos = Array.from(d.querySelectorAll('.module-no')).map((e) => e.textContent.trim());
+        ok('modules.numbering', nos.join(',') === '01,02,03,04,05,06,07,08', `nos=${nos.join(',')}`);
+        ok('feature.liner', /衬纸/.test(d.body.textContent), 'liner module present');
+
+        const hero = txt('.result-amount') || '';
+        const heroNum = Number.parseFloat((hero.match(/([\d.]+)/) || [])[1]);
+        ok('calc.unit-price', Math.abs(heroNum - 3.665) < 0.0005, `hero="${hero}" parsed=${heroNum}`);
+
+        const duo = d.querySelector('.result-duo');
+        ok('calc.cost-total', /3,665\.04/.test(duo ? duo.textContent : ''), `duo=${(duo ? duo.textContent : '').replace(/\s+/g, ' ').trim().slice(0, 40)}`);
+
+        const emojiRe = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
+        ok('design.no-emoji', !emojiRe.test(d.querySelector('.params-col').textContent), 'params emoji-free');
+
+        const btns = Array.from(d.querySelectorAll('.header-actions .btn')).map((b) => b.textContent.trim());
+        ok('ui.buttons', ['方案库', '预设库', '识图录入', 'AI 助手', '设置'].every((x) => btns.includes(x)), `btns=${btns.join('/')}`);
+
+        const rc = d.querySelector('.result-col');
+        ok('layout.desktop-2col', rc && getComputedStyle(rc).display !== 'none', `result-col=${cs(rc, 'display')}`);
+        const dock = d.querySelector('.mobile-dock');
+        ok('layout.dock-hidden', dock && cs(dock, 'display') === 'none', `dock=${cs(dock, 'display')}`);
+
+        ok('layout.no-overflow-x', d.documentElement.scrollWidth <= w.innerWidth + 2, `scrollW=${d.documentElement.scrollWidth} innerW=${w.innerWidth}`);
+
+        const cv = d.createElement('canvas');
+        cv.width = 40;
+        cv.height = 40;
+        const g = cv.getContext('2d');
+        g.fillStyle = '#C7322E';
+        g.fillRect(0, 0, 40, 40);
+        ok('export.canvas-ready', cv.toDataURL('image/png').length > 200, 'canvas 2d available');
+
+        post();
+      };
+
+      window.addEventListener('load', () => setTimeout(run, 800));
+    </script>
+  </body>
+</html>

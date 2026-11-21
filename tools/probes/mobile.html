@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>probe-mobile</title>
+    <style>
+      body { margin: 0; background: #888; }
+      #wrap { width: 390px; height: 844px; overflow: hidden; }
+      #app-frame { width: 390px; height: 844px; border: 0; display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="wrap"><iframe id="app-frame" src="/index.html"></iframe></div>
+    <script>
+      const results = [];
+      const ok = (name, pass, detail) => results.push({ name, pass, detail });
+      const post = () => fetch('/__report?suite=mobile', { method: 'POST', body: JSON.stringify(results, null, 1) }).catch(() => {});
+
+      const run = () => {
+        const f = document.getElementById('app-frame');
+        const d = f.contentDocument;
+        const w = f.contentWindow;
+        if (!d || !d.querySelector('#root') || d.querySelector('#root').children.length === 0) {
+          setTimeout(run, 400);
+          return;
+        }
+        const cs = (el, prop) => (el ? getComputedStyle(el).getPropertyValue(prop) : null);
+
+        ok('mobile.iframe-width', w.innerWidth === 390, `innerWidth=${w.innerWidth}`);
+
+        const rc = d.querySelector('.result-col');
+        ok('mobile.result-col-hidden', cs(rc, 'display') === 'none', `result-col=${cs(rc, 'display')}`);
+
+        const dock = d.querySelector('.mobile-dock');
+        ok('mobile.dock-shown', cs(dock, 'display') !== 'none', `dock=${cs(dock, 'display')}`);
+        ok('mobile.dock-fixed', cs(dock, 'position') === 'fixed', `position=${cs(dock, 'position')}`);
+
+        const inp = d.querySelector('.field-box input');
+        ok('mobile.input-16px', cs(inp, 'font-size') === '16px', `font-size=${cs(inp, 'font-size')}`);
+
+        const fields = d.querySelector('.module-fields');
+        const cols = cs(fields, 'grid-template-columns');
+        ok('mobile.fields-2col', (cols || '').split(' ').filter(Boolean).length === 2, `columns=${cols}`);
+
+        const hero = d.querySelector('.result-amount').textContent;
+        ok('mobile.unit-price', /3\.665/.test(hero), `hero=${hero.trim()}`);
+
+        // 手机端信息架构：一次性动作收进「更多」，单据折叠，模块默认全折叠
+        const actions = d.querySelector('.header-actions');
+        const menuBtn = d.querySelector('.header-menu');
+        ok(
+          'mobile.header-compact',
+          cs(actions, 'display') === 'none' && cs(menuBtn, 'display') !== 'none',
+          `actions=${cs(actions, 'display')} menu=${cs(menuBtn, 'display')}`,
+        );
+
+        const summary = d.querySelector('.doc-summary');
+        const meta = d.querySelector('.doc-meta');
+        ok(
+          'mobile.doc-collapsed',
+          cs(summary, 'display') === 'flex' && cs(meta, 'display') === 'none',
+          `summary=${cs(summary, 'display')} meta=${cs(meta, 'display')}`,
+        );
+
+        const tabs = d.querySelectorAll('.dock-tabs .dock-tab');
+        const firstActive = tabs[0] && tabs[0].classList.contains('is-active');
+        ok('mobile.dock-tabs-4', tabs.length === 4 && firstActive, `tabs=${tabs.length} firstActive=${firstActive}`);
+
+        const openMods = d.querySelectorAll('.module.is-open').length;
+        ok('mobile.modules-collapsed', openMods === 0, `open=${openMods}`);
+
+        ok('mobile.no-overflow-x', d.documentElement.scrollWidth <= 392, `scrollW=${d.documentElement.scrollWidth}`);
+
+        post();
+      };
+
+      window.addEventListener('load', () => setTimeout(run, 800));
+    </script>
+  </body>
+</html>

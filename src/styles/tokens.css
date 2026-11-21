@@ -1,0 +1,89 @@
+/* ============================================================
+   线圈本成本核算 · 设计令牌
+   视觉：Editorial spec-sheet（Monocle 编辑骨架 × MUJI 暖纸色）
+   规则：无阴影、无圆角、层级只靠 1px 发丝线与底色差
+   ============================================================ */
+
+:root {
+  /* —— 纸与墨 —— */
+  --paper: #f4f2ec;
+  --paper-raised: #fbfaf6;
+  --paper-sunken: #efece4;
+  --field-bg: #fefdf9;
+
+  --ink: #2a2a28;
+  --ink-2: #7c7b76;
+  --ink-3: #a9a79f;
+
+  --hair: #d9d6cd;
+  --hair-strong: #c3bfb3;
+
+  /* —— 唯一强调色：朱砂红 —— */
+  --accent: #c7322e;
+  --accent-ink: #9d2622;
+  --accent-wash: rgba(199, 50, 46, 0.06);
+  --accent-wash-2: rgba(199, 50, 46, 0.12);
+
+  /* —— 数据语义（仅用于数字，不作装饰） —— */
+  --pos: #5e6347;
+  --neg: #b4483f;
+  --pos-wash: rgba(94, 99, 71, 0.08);
+  --neg-wash: rgba(180, 72, 63, 0.08);
+
+  /* —— 字体 —— */
+  --serif: "Source Serif 4", "Songti SC", "SimSun", "Noto Serif CJK SC", Georgia,
+    serif;
+  --sans: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI",
+    system-ui, sans-serif;
+
+  /* —— 间距阶梯 —— */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 16px;
+  --s4: 24px;
+  --s5: 32px;
+  --s6: 48px;
+  --s7: 72px;
+
+  /* —— 字号 —— */
+  --fs-label: 11px;
+  --fs-meta: 12px;
+  --fs-body: 14px;
+  --fs-input: 15px;
+  --fs-module: 17px;
+  --fs-section: 21px;
+  --fs-display: clamp(34px, 6vw, 56px);
+
+  /* —— 动效 —— */
+  --ease: cubic-bezier(0.32, 0.08, 0.24, 1);
+  /* 弹簧升起：折叠面板、浮层入场 */
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  /* 退场加速：浮层关闭 */
+  --ease-exit: cubic-bezier(0.22, 1, 0.36, 1);
+  /* 按压回弹：按钮按下有轻微过冲 */
+  --ease-press: cubic-bezier(0.18, 0.89, 0.32, 1.28);
+
+  --dur: 220ms;
+  --dur-expand: 400ms;
+  --dur-collapse: 240ms;
+  --dur-enter: 320ms;
+  --dur-exit: 200ms;
+  --dur-chevron: 260ms;
+  --dur-press: 150ms;
+
+  /* —— 版心 —— */
+  --result-width: 392px;
+  --max-width: 1440px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur: 0ms;
+    --dur-expand: 0ms;
+    --dur-collapse: 0ms;
+    --dur-enter: 0ms;
+    --dur-exit: 0ms;
+    --dur-chevron: 0ms;
+    --dur-press: 0ms;
+  }
+}
