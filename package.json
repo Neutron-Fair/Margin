@@ -1,6 +1,6 @@
 {
   "name": "coilbook-cost",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "线圈本全工艺成本核算 / CoilBook Cost",
   "type": "module",
