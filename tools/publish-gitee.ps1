@@ -53,12 +53,17 @@ function Invoke-Gitee {
 
 function Get-ReleaseId {
   param([string]$Token)
+  # 优先按 tag 查；Gitee 这个接口对刚创建的 release 有延迟，查不到时再列一遍匹配
   try {
     $rel = Invoke-Gitee -Method Get -Path "/releases/tags/$Tag?access_token=$Token" -Token $Token
-    return $rel.id
-  } catch {
-    return $null
-  }
+    if ($rel -and $rel.id) { return $rel.id }
+  } catch { }
+  try {
+    $list = Invoke-Gitee -Method Get -Path "/releases?access_token=$Token&per_page=100&page=1" -Token $Token
+    $hit = @($list) | Where-Object { $_.tag_name -eq $Tag } | Select-Object -First 1
+    if ($hit) { return $hit.id }
+  } catch { }
+  return $null
 }
 
 function Split-Installer {
@@ -75,7 +80,7 @@ function Split-Installer {
       $outPath = "$Source.part$i"
       $existing = Get-Item $outPath -ErrorAction SilentlyContinue
       if ($existing -and $existing.Length -eq $len) {
-        Write-Output ("  part{0} 复用（{1:N0} 字节）" -f $i, $len)
+        Write-Host ("  part{0} 复用（{1:N0} 字节）" -f $i, $len)
       } else {
         $in.Position = $start
         $out = [System.IO.File]::Create($outPath)
@@ -90,7 +95,7 @@ function Split-Installer {
             $remaining -= $read
           }
         } finally { $out.Close() }
-        Write-Output ("  part{0} 写入（{1:N0} 字节）" -f $i, $len)
+        Write-Host ("  part{0} 写入（{1:N0} 字节）" -f $i, $len)
       }
       $parts += [ordered]@{ name = [System.IO.Path]::GetFileName($outPath); size = $len }
     }
@@ -116,11 +121,18 @@ if ($relId) {
   }
 } else {
   if ($DryRun) { Write-Output 'DRYRUN would create release'; exit 0 }
-  $rel = Invoke-Gitee -Method Post -Path '/releases' -Token $token -Body @{
-    access_token = $token; tag_name = $Tag; name = $Title; body = $notes; target_commitish = 'main'; prerelease = $false
+  try {
+    $rel = Invoke-Gitee -Method Post -Path '/releases' -Token $token -Body @{
+      access_token = $token; tag_name = $Tag; name = $Title; body = $notes; target_commitish = 'main'; prerelease = $false
+    }
+    $relId = $rel.id
+    Write-Output "RELEASE_CREATED id=$relId"
+  } catch {
+    # 并发/延迟导致「标签已存在发行版」时，重新查一次再继续
+    $relId = Get-ReleaseId -Token $token
+    if (-not $relId) { throw "创建 Gitee Release 失败：$($_.Exception.Message)" }
+    Write-Output "RELEASE_EXISTS(after retry) id=$relId"
   }
-  $relId = $rel.id
-  Write-Output "RELEASE_CREATED id=$relId"
 }
 
 # ---- 2. 收集要传的文件 ----
@@ -171,6 +183,7 @@ $existingNames = @()
 if ($existing) { $existingNames = @($existing | ForEach-Object { $_.name }) }
 
 foreach ($f in $uploads) {
+  if (-not $f -or -not (Test-Path $f)) { throw "待上传文件不存在：$f" }
   $name = [System.IO.Path]::GetFileName($f)
   $hit = @($existing | Where-Object { $_.name -eq $name })
   foreach ($h in $hit) {
