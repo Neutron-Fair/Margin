@@ -1389,6 +1389,12 @@ body[data-panel-state='closing'] .sheet {
   color: var(--ink);
 }
 
+.update-source {
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
 .update-adv-toggle {
   display: block;
   width: 100%;

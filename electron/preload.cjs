@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('coilbook', {
     current: () => ipcRenderer.invoke('updater:current'),
     check: (opts) => ipcRenderer.invoke('updater:check', opts),
     download: (opts) => ipcRenderer.invoke('updater:download', opts),
+    downloadParts: (opts) => ipcRenderer.invoke('updater:download-parts', opts),
     install: (filePath) => ipcRenderer.invoke('updater:install', filePath),
     onProgress: (cb) => {
       const handler = (_event, payload) => cb(payload);

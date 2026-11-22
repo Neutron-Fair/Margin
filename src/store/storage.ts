@@ -44,10 +44,16 @@ export interface Settings {
     cloudApiKey: string;
     cloudModel: string;
   };
-  /** 自动更新的拉取源（GitHub 仓库）；token 另存系统安全存储，不落普通设置 */
+  /**
+   * 自动更新的拉取源。优先 GitHub；不可用时退回 Gitee（同一套 release 约定）。
+   * token 另存系统安全存储，不落普通设置。
+   */
   update: {
     owner: string;
     repo: string;
+    /** Gitee 的 owner/repo 与 GitHub 不同（大小写不同，因此单独存） */
+    giteeOwner: string;
+    giteeRepo: string;
   };
 }
 
@@ -154,6 +160,8 @@ export const DEFAULT_SETTINGS: Settings = {
   update: {
     owner: 'Neutron-Fair',
     repo: 'Margin',
+    giteeOwner: 'neutronfair',
+    giteeRepo: 'Margin',
   },
 };
 

@@ -4,13 +4,16 @@ import { loadSettings, saveSettings, type Settings } from '../../store/storage.t
 import {
   checkForUpdate,
   currentVersion,
+  downloadParts,
   downloadUpdate,
   formatBytes,
   installUpdate,
   isAndroid,
   isDesktop,
+  loadPartsManifest,
   openDownload,
-  pickAsset,
+  parseChecksums,
+  planInstall,
   type UpdateAsset,
   type UpdateResult,
 } from '../../updater/index.ts';
@@ -29,7 +32,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-/** 把 GitHub Release 的 Markdown 粗略压成纯文本，够看清改了什么即可 */
+/** 把 Release 的 Markdown 粗略压成纯文本，够看清改了什么即可 */
 function plainNotes(md: string): string {
   return md
     .replace(/^#{1,6}\s*/gm, '')
@@ -63,13 +66,19 @@ export function UpdatePanel({ onClose, onToast }: Props) {
     setInfo(null);
     try {
       if (token) await setUpdateToken(token).catch(() => undefined);
-      const res = await checkForUpdate(settings.update, token);
+      const res = await checkForUpdate(
+        {
+          github: { owner: settings.update.owner, repo: settings.update.repo },
+          gitee: { owner: settings.update.giteeOwner, repo: settings.update.giteeRepo },
+        },
+        token,
+      );
       if (!res.ok) {
         const map: Record<string, string> = {
           auth: '凭据被拒绝：请到「高级」里填一个有 repo 只读权限的 GitHub Token',
-          'not-found': '找不到该仓库的 Release：仓库可能是私有的（需填 Token），或还没有发布版本',
+          'not-found': '两个更新源都找不到 Release（GitHub 与 Gitee），或仓库还没发布版本',
           'bad-source': '仓库名不合法',
-          network: '网络不可达，检查代理或网络后重试',
+          network: '网络不可达：GitHub 与 Gitee 都没连上，检查代理或网络后重试',
         };
         setError(map[res.reason || ''] || `检查失败（${res.reason || '未知原因'}）`);
       } else {
@@ -105,24 +114,54 @@ export function UpdatePanel({ onClose, onToast }: Props) {
     };
   }, []);
 
-  const asset: UpdateAsset | undefined = info?.assets ? pickAsset(info.assets) : undefined;
+  const hasUpdate = Boolean(info?.ok && info.hasUpdate);
+  const plan = hasUpdate ? planInstall(info as UpdateResult) : null;
+  const sourceLabel = info?.source === 'gitee' ? 'Gitee' : info?.source === 'github' ? 'GitHub' : '';
+
+  // 没有当前平台的安装包时（比如浏览器里打开），退化成「打开下载页」
+  const fallbackUrl =
+    info?.htmlUrl ||
+    (info?.tag
+      ? `https://github.com/${settings.update.owner}/${settings.update.repo}/releases/tag/${info.tag}`
+      : '');
 
   const doInstall = async () => {
-    if (!asset) return;
+    if (!plan) return;
     setError('');
     setInstalling(true);
     try {
-      if (isDesktop()) {
-        setProgress({ received: 0, total: asset.size });
-        const file = await downloadUpdate(asset, token, (p) => setProgress(p));
-        onToast(`安装包已下载（${formatBytes(file.size)}），2 秒后开始安装`);
-        await installUpdate(file.path);
-      } else if (isAndroid()) {
-        openDownload(asset.downloadUrl);
-        onToast('已交给系统浏览器下载，下载完成后点开安装即可');
-      } else {
-        openDownload(asset.downloadUrl);
+      if (plan.kind === 'page') {
+        openDownload(plan.htmlUrl || fallbackUrl);
+        return;
       }
+      if (plan.kind === 'single') {
+        if (isDesktop()) {
+          setProgress({ received: 0, total: plan.asset.size });
+          const file = await downloadUpdate(plan.asset, token, (p) => setProgress(p));
+          onToast(`安装包已下载（${formatBytes(file.size)}），2 秒后开始安装`);
+          await installUpdate(file.path);
+        } else if (isAndroid()) {
+          openDownload(plan.asset.downloadUrl);
+          onToast('已交给系统浏览器下载，下载完成后点开安装即可');
+        } else {
+          openDownload(plan.asset.downloadUrl);
+        }
+        return;
+      }
+      // parts：Gitee 的大安装包被切片，下载后拼接并校验
+      // 清单文件在 Gitee 上没有 CORS（渲染层读不到），因此优先用清单、读不到就从发布说明里解析
+      const manifest = await loadPartsManifest(plan.manifestUrl);
+      const sums = parseChecksums(info?.notes);
+      const expected =
+        manifest ??
+        (sums.exe
+          ? { name: plan.parts[0].name.replace(/\.part\d+$/i, ''), size: sums.exe.size, sha256: sums.exe.sha256, parts: [] }
+          : undefined);
+      const totalSize = expected?.size || plan.parts.reduce((sum, p) => sum + p.size, 0);
+      setProgress({ received: 0, total: totalSize });
+      const file = await downloadParts(plan.parts, expected, (p) => setProgress(p));
+      onToast(`安装包已下载并校验通过（${formatBytes(file.size)}），2 秒后开始安装`);
+      await installUpdate(file.path);
     } catch (e) {
       setError(e instanceof Error ? e.message : '下载或安装失败');
     } finally {
@@ -131,18 +170,17 @@ export function UpdatePanel({ onClose, onToast }: Props) {
   };
 
   const pct = progress && progress.total > 0 ? Math.min(100, Math.round((progress.received / progress.total) * 100)) : 0;
-  const hasUpdate = Boolean(info?.ok && info.hasUpdate);
-
-  // 没有当前平台的安装包时（浏览器里打开的页面），退化成「打开下载页」
-  const fallbackUrl =
-    info?.htmlUrl ||
-    (info?.tag ? `https://github.com/${settings.update.owner}/${settings.update.repo}/releases/tag/${info.tag}` : '');
 
   // 只留一个按钮：语义随状态走，用户永远只需点这一个
   const action = hasUpdate
-    ? asset
-      ? { label: installing ? '处理中…' : isDesktop() ? '下载并安装' : '打开下载页', run: doInstall, disabled: installing, accent: true }
-      : { label: '打开下载页', run: () => fallbackUrl && openDownload(fallbackUrl), disabled: !fallbackUrl, accent: true }
+    ? plan && plan.kind !== 'page'
+      ? {
+          label: installing ? '处理中…' : isDesktop() ? '下载并安装' : '打开下载页',
+          run: doInstall,
+          disabled: installing,
+          accent: true,
+        }
+      : { label: '打开下载页', run: doInstall, disabled: installing || !fallbackUrl, accent: true }
     : { label: checking ? '检查中…' : info || error ? '重新检查' : '检查更新', run: doCheck, disabled: checking || installing, accent: false };
 
   return (
@@ -166,7 +204,9 @@ export function UpdatePanel({ onClose, onToast }: Props) {
           {checking && <div className="update-status">正在检查有没有新版本…</div>}
 
           {!checking && info?.ok && !info.hasUpdate && (
-            <div className="update-status is-ok">已是最新版本（{info.current}）</div>
+            <div className="update-status is-ok">
+              已是最新版本（{info.current}）{sourceLabel && <span className="update-source">· {sourceLabel}</span>}
+            </div>
           )}
 
           {error && <div className="update-error">{error}</div>}
@@ -175,7 +215,10 @@ export function UpdatePanel({ onClose, onToast }: Props) {
             <div className="update-found">
               <div className="update-found-head">
                 <b className="num">v{info?.latest}</b>
-                {asset && <span className="num">{formatBytes(asset.size)}</span>}
+                <span className="num">
+                  {sourceLabel && <span className="update-source">{sourceLabel}</span>}
+                  {plan?.kind === 'single' && plan.asset.size > 0 ? ` · ${formatBytes(plan.asset.size)}` : ''}
+                </span>
               </div>
               {info?.publishedAt && (
                 <div className="update-hint" style={{ padding: '8px 14px 0' }}>
@@ -219,7 +262,7 @@ export function UpdatePanel({ onClose, onToast }: Props) {
 
           {showAdvanced && (
             <div className="update-adv">
-              <Row label="仓库">
+              <Row label="GitHub">
                 <div className="field-box" style={{ display: 'flex', gap: 6, padding: '0 8px' }}>
                   <input
                     value={settings.update.owner}
@@ -249,8 +292,9 @@ export function UpdatePanel({ onClose, onToast }: Props) {
                 </div>
               </Row>
               <p className="update-hint">
-                默认从 <code>{settings.update.owner}/{settings.update.repo}</code> 取最新 Release，公开仓库不需要 Token。
-                只有换到别的发布源、或仓库改为私有时才需要改这里；Token 存系统安全存储，不写入普通设置。
+                默认先取 <code>{settings.update.owner}/{settings.update.repo}</code> 的最新 Release，公开仓库不需要 Token；
+                GitHub 连不上时自动改用 Gitee 镜像 <code>{settings.update.giteeOwner}/{settings.update.giteeRepo}</code>。
+                只有换发布源或仓库改为私有时才需要改这里；Token 存系统安全存储，不写入普通设置。
               </p>
             </div>
           )}

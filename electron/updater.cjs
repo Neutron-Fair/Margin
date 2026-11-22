@@ -2,6 +2,8 @@ const { app, ipcMain } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const https = require('node:https');
+const crypto = require('node:crypto');
+const { pipeline } = require('node:stream/promises');
 const { spawn } = require('node:child_process');
 
 const UA = 'CoilBookCost-Updater';
@@ -122,6 +124,50 @@ function downloadFile(url, destPath, { token, onProgress, redirects = 0 } = {}) 
   });
 }
 
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const rs = fs.createReadStream(filePath);
+    rs.on('data', (chunk) => hash.update(chunk));
+    rs.on('end', () => resolve(hash.digest('hex')));
+    rs.on('error', reject);
+  });
+}
+
+/**
+ * 把若干分片按顺序拼成一个文件，并按期望大小/哈希校验。
+ * 抽成独立函数便于单测（拼接与校验是这条链路最容易出错的地方）。
+ */
+async function mergeParts(partPaths, outPath, { expectedSize = 0, expectedSha256 = '' } = {}) {
+  fs.rmSync(outPath, { force: true });
+  const ws = fs.createWriteStream(outPath);
+  try {
+    for (const p of partPaths) {
+      await pipeline(fs.createReadStream(p), ws, { end: false });
+    }
+  } finally {
+    await new Promise((resolve) => ws.end(resolve));
+  }
+
+  const st = fs.statSync(outPath);
+  if (expectedSize > 0 && st.size !== expectedSize) {
+    fs.rmSync(outPath, { force: true });
+    throw new Error(`合并后大小不符（${st.size} ≠ ${expectedSize}），请重试`);
+  }
+  if (st.size < 1024) {
+    fs.rmSync(outPath, { force: true });
+    throw new Error('合并后的安装包不完整');
+  }
+  if (/^[a-f0-9]{64}$/.test(expectedSha256)) {
+    const actual = await sha256File(outPath);
+    if (actual !== expectedSha256) {
+      fs.rmSync(outPath, { force: true });
+      throw new Error('安装包校验失败（SHA-256 不一致），请重试');
+    }
+  }
+  return { ok: true, path: outPath, size: st.size };
+}
+
 function registerUpdater() {
   ipcMain.handle('updater:current', async (event) => {
     assertTrusted(event);
@@ -191,6 +237,58 @@ function registerUpdater() {
     return { ok: true, path: dest, size: stat.size, expected: result.total };
   });
 
+  /*
+   * 分片下载（Gitee 的产物）：GitHub Release 的单附件没有大小限制，
+   * 而 Gitee 发行版附件单文件上限 100MB，所以 142MB 的安装包在那里被切成
+   * `<名称>.exe.part1/.part2`。这里按顺序下载、拼接、按清单校验后返回路径。
+   */
+  ipcMain.handle('updater:download-parts', async (event, opts = {}) => {
+    assertTrusted(event);
+    const urls = Array.isArray(opts.urls) ? opts.urls : [];
+    const name = typeof opts.name === 'string' ? opts.name : '';
+    const expectedSize = Number(opts.expectedSize) || 0;
+    const expectedSha256 = typeof opts.expectedSha256 === 'string' ? opts.expectedSha256.trim().toLowerCase() : '';
+
+    if (urls.length === 0 || urls.length > 8) throw new Error('无效的分片列表');
+    for (const u of urls) {
+      if (
+        typeof u !== 'string' ||
+        !/^https:\/\/(gitee\.com|github\.com|api\.github\.com|objects\.githubusercontent\.com)\//.test(u)
+      ) {
+        throw new Error('无效的下载地址');
+      }
+    }
+    if (!/^[\w.\- ]+\.exe$/i.test(name)) throw new Error('无效的文件名');
+
+    const dir = path.join(app.getPath('temp'), 'coilbook-update');
+    fs.mkdirSync(dir, { recursive: true });
+    const safe = name.replace(/[^\w.\- ]+/g, '_');
+    const sender = event.sender;
+    const total = expectedSize > 0 ? expectedSize : 0;
+    let received = 0;
+    const partPaths = [];
+
+    for (let i = 0; i < urls.length; i += 1) {
+      const dest = path.join(dir, `${safe}.part${i + 1}`);
+      const base = received;
+      await downloadFile(urls[i], dest, {
+        token: '',
+        onProgress: (n) => {
+          if (!sender.isDestroyed()) sender.send('updater:progress', { received: base + n, total });
+        },
+      });
+      const st = fs.statSync(dest);
+      if (st.size < 1024) throw new Error(`第 ${i + 1} 个分片下载不完整`);
+      received = base + st.size;
+      partPaths.push(dest);
+    }
+
+    const out = path.join(dir, safe);
+    const merged = await mergeParts(partPaths, out, { expectedSize: total, expectedSha256 });
+    for (const p of partPaths) fs.rmSync(p, { force: true });
+    return merged;
+  });
+
   ipcMain.handle('updater:install', async (event, filePath) => {
     assertTrusted(event);
     if (typeof filePath !== 'string') throw new Error('无效的安装包路径');
@@ -229,4 +327,4 @@ function registerUpdater() {
   });
 }
 
-module.exports = { registerUpdater, compareVersions };
+module.exports = { registerUpdater, compareVersions, mergeParts, sha256File };

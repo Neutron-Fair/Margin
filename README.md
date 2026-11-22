@@ -149,7 +149,8 @@ docs/         安卓端设计稿（android-redesign.md 说明 + v0/ 源码与截
 
 | 版本 | 日期 | 主要变更 |
 | --- | --- | --- |
-| **1.2.3** | 2026-11-22 | 「检查更新」打开即自动检查、只留一个按钮；仓库地址与 Token 收进默认折叠的「高级设置」 |
+| **1.2.4** | 2026-11-22 | 更新源改为「GitHub 优先、Gitee 兜底」：两个源自动切换，Gitee 上的大安装包按 90MB 分片发布，客户端下载后拼接并校验 SHA-256 |
+| 1.2.3 | 2026-11-22 | 「检查更新」打开即自动检查、只留一个按钮；仓库地址与 Token 收进默认折叠的「高级设置」 |
 | 1.2.2 | 2026-11-22 | 桌面端新增「更多」入口（成本分档/参数自检/检查更新/恢复默认此前在 Windows 上进不去）；面板打开时冻结背后页面滚动 |
 | 1.2.1 | 2026-11-22 | 发布整理：Android 改用调试证书签名、文档不再描述演进来源；修正「同版本重装后收不到更新提示」（检查更新只认更高版本号）。无功能变更 |
 | 1.2.0 | 2026-11-21 | 修复 Windows 覆盖安装失败（旧卸载器的目录改名缺陷）；新增两端自动检查更新，从 GitHub Release 拉取安装包 |
@@ -159,11 +160,23 @@ docs/         安卓端设计稿（android-redesign.md 说明 + v0/ 源码与截
 
 完整更新公告见 [CHANGELOG.md](CHANGELOG.md)。
 
-- Android 包名 `com.coilbook.cost`，`versionCode 7` / `versionName 1.2.3`，使用调试证书签名（不提供正式签名证书）。
+- Android 包名 `com.coilbook.cost`，`versionCode 8` / `versionName 1.2.4`，使用调试证书签名（不提供正式签名证书）。
 - 桌面端从 1.0.0 / 1.1.x **可以直接覆盖安装**（1.2.0 起修复了旧卸载器导致的升级失败）。
-- 1.2.3 APK：8,000,672 字节，SHA-256 `8D9980170980DFCE92DF3EA9F64CF9ADC4386E77CE94932286FD124F5AAE6665`。
-- 1.2.3 安装包：149,526,503 字节，SHA-256 `8D77000D7D3AE5DF31F2047B146DD03DC70DFA2B023B2997780B31C581F62B98`。
-- 发布页：<https://github.com/Neutron-Fair/Margin/releases/tag/v1.2.3>（公开仓库，可直接下载）
+- 1.2.4 APK：8,001,836 字节，SHA-256 `A3F96F039A38658F38FC7F7BC00757A607D2E957C1028A4E67F24A1C5739F9E9`。
+- 1.2.4 安装包：149,529,126 字节，SHA-256 `21D839FC182BF5D508845026AFB98EBA77461BB31A298A48447A94D28AE57C52`。
+- 发布页（GitHub，优先）：<https://github.com/Neutron-Fair/Margin/releases/tag/v1.2.4>
+- 发布页（Gitee，备用）：<https://gitee.com/neutronfair/Margin/releases/tag/v1.2.4>
+
+## 更新源
+
+「更多 → 检查更新」默认先查 GitHub Release；GitHub 连不上时自动改用 Gitee 镜像，用户不需要做任何设置。
+
+| 源 | 用途 | 说明 |
+| --- | --- | --- |
+| GitHub `Neutron-Fair/Margin` | 优先 | 安装包单文件直接下载 |
+| Gitee `neutronfair/Margin` | 兜底 | 附件单文件上限 100MB，因此 Windows 安装包按 90MB 切成 `.part1/.part2`；客户端下载后拼接，并按发布说明里的 SHA-256 校验 |
+
+发布两端用两个脚本：`tools/publish-release.ps1`（GitHub）、`tools/publish-gitee.ps1`（Gitee，自动切片 + 上传清单）。
 
 ## 已知限制
 
