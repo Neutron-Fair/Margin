@@ -4,6 +4,24 @@
 
 ---
 
+## 1.2.5 · 2026-11-22
+
+### 修复：Windows「检查更新」报证书链错误
+
+- 现象：点「检查更新」弹出 `Error invoking remote method 'updater:check': Error: unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca`
+- 原因：主进程用 Node 自带的 HTTPS 通道（Node 内置 CA 包），而本机 `api.github.com` 的证书链缺中间证书，只有 Windows 系统证书库里才有；同一时刻 `curl` 与 Chromium 请求同一地址都正常
+- 修法（不关闭证书校验）：主进程的检查与下载**优先走 Chromium 网络栈**（Electron `net`，用系统证书库），失败再退 Node `https`；渲染层还有一次 `fetch` 重试
+- 失败时不再把裸 Node 报错弹到界面，改为按原因分类并给一句人话诊断
+- 注意：装 1.2.2 / 1.2.3 的用户**必须手动装一次这一版**，修复只对装上新版之后生效
+
+### 变更：检查走 GitHub，下载优先 Gitee
+
+- 实测同一条网线：GitHub 检查 0.2–1.6 秒但下载约 29 KB/s（150MB 要 85 分钟）；Gitee 检查 0.2 秒、下载约 2.1 MB/s（约 75 秒）
+- 所以检查仍走 GitHub（最快拿到最新版本号），下载时若 Gitee 有**同版本**分片就自动用 Gitee，界面显示「下载源 Gitee」
+- 两个源版本不一致时不用镜像，避免出现「提示新版本、实际下到旧版本」
+
+---
+
 ## 1.2.4 · 2026-11-22
 
 ### 变更：更新源「GitHub 优先、Gitee 兜底」
