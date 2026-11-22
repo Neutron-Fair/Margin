@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getUpdateToken, setUpdateToken } from '../../store/secrets.ts';
 import { loadSettings, saveSettings, type Settings } from '../../store/storage.ts';
 import {
@@ -49,22 +49,7 @@ export function UpdatePanel({ onClose, onToast }: Props) {
   const [error, setError] = useState('');
   const [progress, setProgress] = useState<{ received: number; total: number } | null>(null);
   const [installing, setInstalling] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      setVersion(await currentVersion());
-      try {
-        const t = await getUpdateToken();
-        if (active) setToken(t);
-      } catch {
-        /* 安全存储不可用时只是不能存 token，不影响公开仓库检查 */
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const patchSource = (key: 'owner' | 'repo', value: string) => {
     const next = { ...settings, update: { ...settings.update, [key]: value } };
@@ -81,7 +66,7 @@ export function UpdatePanel({ onClose, onToast }: Props) {
       const res = await checkForUpdate(settings.update, token);
       if (!res.ok) {
         const map: Record<string, string> = {
-          auth: '凭据被拒绝：请在下方填一个有 repo 只读权限的 GitHub Token',
+          auth: '凭据被拒绝：请到「高级」里填一个有 repo 只读权限的 GitHub Token',
           'not-found': '找不到该仓库的 Release：仓库可能是私有的（需填 Token），或还没有发布版本',
           'bad-source': '仓库名不合法',
           network: '网络不可达，检查代理或网络后重试',
@@ -89,7 +74,6 @@ export function UpdatePanel({ onClose, onToast }: Props) {
         setError(map[res.reason || ''] || `检查失败（${res.reason || '未知原因'}）`);
       } else {
         setInfo(res);
-        if (!res.hasUpdate) onToast(`已是最新版本 ${res.current}`);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : '检查更新失败');
@@ -97,6 +81,29 @@ export function UpdatePanel({ onClose, onToast }: Props) {
       setChecking(false);
     }
   };
+
+  // 打开面板即自动检查：用户不需要填任何东西，也不用手点第一次
+  const doCheckRef = useRef(doCheck);
+  doCheckRef.current = doCheck;
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const v = await currentVersion();
+      if (!active) return;
+      setVersion(v);
+      try {
+        const t = await getUpdateToken();
+        if (active) setToken(t);
+      } catch {
+        /* 安全存储不可用时只是不能存 token，不影响公开仓库检查 */
+      }
+      if (active) void doCheckRef.current();
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const asset: UpdateAsset | undefined = info?.assets ? pickAsset(info.assets) : undefined;
 
@@ -124,6 +131,19 @@ export function UpdatePanel({ onClose, onToast }: Props) {
   };
 
   const pct = progress && progress.total > 0 ? Math.min(100, Math.round((progress.received / progress.total) * 100)) : 0;
+  const hasUpdate = Boolean(info?.ok && info.hasUpdate);
+
+  // 没有当前平台的安装包时（浏览器里打开的页面），退化成「打开下载页」
+  const fallbackUrl =
+    info?.htmlUrl ||
+    (info?.tag ? `https://github.com/${settings.update.owner}/${settings.update.repo}/releases/tag/${info.tag}` : '');
+
+  // 只留一个按钮：语义随状态走，用户永远只需点这一个
+  const action = hasUpdate
+    ? asset
+      ? { label: installing ? '处理中…' : isDesktop() ? '下载并安装' : '打开下载页', run: doInstall, disabled: installing, accent: true }
+      : { label: '打开下载页', run: () => fallbackUrl && openDownload(fallbackUrl), disabled: !fallbackUrl, accent: true }
+    : { label: checking ? '检查中…' : info || error ? '重新检查' : '检查更新', run: doCheck, disabled: checking || installing, accent: false };
 
   return (
     <div className="overlay" onClick={onClose}>
@@ -142,52 +162,27 @@ export function UpdatePanel({ onClose, onToast }: Props) {
           <Row label="当前版本">
             <div className="update-version num">{version || '…'}</div>
           </Row>
-          <Row label="仓库">
-            <div className="field-box" style={{ display: 'flex', gap: 6, padding: '0 8px' }}>
-              <input
-                value={settings.update.owner}
-                onChange={(e) => patchSource('owner', e.target.value)}
-                aria-label="仓库所有者"
-                style={{ textAlign: 'left', padding: '8px 0', flex: 1, minWidth: 0 }}
-              />
-              <span style={{ color: 'var(--ink-3)', alignSelf: 'center', flex: 'none' }}>/</span>
-              <input
-                value={settings.update.repo}
-                onChange={(e) => patchSource('repo', e.target.value)}
-                aria-label="仓库名"
-                style={{ textAlign: 'left', padding: '8px 0', flex: 1, minWidth: 0 }}
-              />
-            </div>
-          </Row>
-          <Row label="Token">
-            <div className="field-box">
-              <input
-                type="password"
-                value={token}
-                placeholder="公开仓库可留空"
-                onChange={(e) => setToken(e.target.value)}
-                aria-label="GitHub Token"
-                style={{ fontFamily: 'monospace', textAlign: 'left' }}
-              />
-            </div>
-          </Row>
-          <p className="update-hint">
-            仓库私有时需要填一个只读 Token（<code>repo</code> 权限）。Token 存系统安全存储，不写入普通设置。
-          </p>
+
+          {checking && <div className="update-status">正在检查有没有新版本…</div>}
+
+          {!checking && info?.ok && !info.hasUpdate && (
+            <div className="update-status is-ok">已是最新版本（{info.current}）</div>
+          )}
 
           {error && <div className="update-error">{error}</div>}
 
-          {info?.ok && info.hasUpdate && (
+          {!checking && hasUpdate && (
             <div className="update-found">
               <div className="update-found-head">
-                <b className="num">v{info.latest}</b>
+                <b className="num">v{info?.latest}</b>
                 {asset && <span className="num">{formatBytes(asset.size)}</span>}
               </div>
-              {info.publishedAt && (
-                <div className="update-hint">发布于 {new Date(info.publishedAt).toLocaleString()}</div>
+              {info?.publishedAt && (
+                <div className="update-hint" style={{ padding: '8px 14px 0' }}>
+                  发布于 {new Date(info.publishedAt).toLocaleString()}
+                </div>
               )}
-              <pre className="update-notes">{plainNotes(info.notes || '（该版本没有填写说明）')}</pre>
-              {!asset && <div className="update-error">该版本没有提供当前平台可用的安装包</div>}
+              <pre className="update-notes">{plainNotes(info?.notes || '（该版本没有填写说明）')}</pre>
             </div>
           )}
 
@@ -202,19 +197,63 @@ export function UpdatePanel({ onClose, onToast }: Props) {
           )}
 
           <div className="sheet-foot" style={{ padding: '13px 0 0', borderTop: 0 }}>
-            <button type="button" className="btn" onClick={onClose}>
-              关闭
+            <button
+              type="button"
+              className={`btn ${action.accent ? 'btn-accent' : 'btn-solid'}`}
+              onClick={action.run}
+              disabled={action.disabled}
+            >
+              {action.label}
             </button>
-            {info?.ok && info.hasUpdate && asset ? (
-              <button type="button" className="btn btn-accent" onClick={doInstall} disabled={installing}>
-                {installing ? '处理中…' : isDesktop() ? '下载并安装' : '打开下载页'}
-              </button>
-            ) : (
-              <button type="button" className="btn btn-solid" onClick={doCheck} disabled={checking}>
-                {checking ? '检查中…' : '检查更新'}
-              </button>
-            )}
           </div>
+
+          {/* 发布源与 Token 只给需要改的人看：默认收起，普通用户看不到这些字段 */}
+          <button
+            type="button"
+            className="update-adv-toggle"
+            onClick={() => setShowAdvanced((v) => !v)}
+            aria-expanded={showAdvanced}
+          >
+            {showAdvanced ? '收起高级设置 ▴' : '高级设置 ▾'}
+          </button>
+
+          {showAdvanced && (
+            <div className="update-adv">
+              <Row label="仓库">
+                <div className="field-box" style={{ display: 'flex', gap: 6, padding: '0 8px' }}>
+                  <input
+                    value={settings.update.owner}
+                    onChange={(e) => patchSource('owner', e.target.value)}
+                    aria-label="仓库所有者"
+                    style={{ textAlign: 'left', padding: '8px 0', flex: 1, minWidth: 0 }}
+                  />
+                  <span style={{ color: 'var(--ink-3)', alignSelf: 'center', flex: 'none' }}>/</span>
+                  <input
+                    value={settings.update.repo}
+                    onChange={(e) => patchSource('repo', e.target.value)}
+                    aria-label="仓库名"
+                    style={{ textAlign: 'left', padding: '8px 0', flex: 1, minWidth: 0 }}
+                  />
+                </div>
+              </Row>
+              <Row label="Token">
+                <div className="field-box">
+                  <input
+                    type="password"
+                    value={token}
+                    placeholder="公开仓库留空"
+                    onChange={(e) => setToken(e.target.value)}
+                    aria-label="GitHub Token"
+                    style={{ fontFamily: 'monospace', textAlign: 'left' }}
+                  />
+                </div>
+              </Row>
+              <p className="update-hint">
+                默认从 <code>{settings.update.owner}/{settings.update.repo}</code> 取最新 Release，公开仓库不需要 Token。
+                只有换到别的发布源、或仓库改为私有时才需要改这里；Token 存系统安全存储，不写入普通设置。
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

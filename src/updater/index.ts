@@ -29,6 +29,8 @@ export interface UpdateResult {
   notes?: string;
   publishedAt?: string;
   assets?: UpdateAsset[];
+  /** Release 页面地址：没有当前平台安装包时用它兜底「打开下载页」 */
+  htmlUrl?: string;
 }
 
 export interface UpdateSource {
@@ -117,6 +119,7 @@ export async function checkForUpdate(source: UpdateSource, token: string): Promi
     name?: string;
     body?: string;
     published_at?: string;
+    html_url?: string;
     assets?: Array<{ id: number; name: string; size: number; url: string; browser_download_url: string }>;
   };
   const latest = String(rel.tag_name || '').replace(/^v/i, '');
@@ -129,6 +132,7 @@ export async function checkForUpdate(source: UpdateSource, token: string): Promi
     name: rel.name || rel.tag_name,
     notes: rel.body || '',
     publishedAt: rel.published_at || '',
+    htmlUrl: rel.html_url || '',
     assets: (rel.assets || []).map((a) => ({
       id: a.id,
       name: a.name,

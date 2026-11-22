@@ -162,6 +162,7 @@ function registerUpdater() {
       name: rel.name || rel.tag_name,
       notes: rel.body || '',
       publishedAt: rel.published_at || '',
+      htmlUrl: rel.html_url || '',
       assets,
     };
   });
