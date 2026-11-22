@@ -80,7 +80,9 @@ export function UpdatePanel({ onClose, onToast }: Props) {
           'bad-source': '仓库名不合法',
           network: '网络不可达：GitHub 与 Gitee 都没连上，检查代理或网络后重试',
         };
-        setError(map[res.reason || ''] || `检查失败（${res.reason || '未知原因'}）`);
+        const base = map[res.reason || ''] || `检查失败（${res.reason || '未知原因'}）`;
+        // detail 是主进程翻译过的人话（如「TLS 证书校验失败（证书链不完整）」），附在后面便于排查
+        setError(res.detail ? `${base}：${res.detail}` : base);
       } else {
         setInfo(res);
       }
@@ -117,6 +119,15 @@ export function UpdatePanel({ onClose, onToast }: Props) {
   const hasUpdate = Boolean(info?.ok && info.hasUpdate);
   const plan = hasUpdate ? planInstall(info as UpdateResult) : null;
   const sourceLabel = info?.source === 'gitee' ? 'Gitee' : info?.source === 'github' ? 'GitHub' : '';
+  // 下载源可能和检查源不同（检查走 GitHub 拿最新，下载优先 Gitee 因为快得多）
+  const downloadLabel =
+    plan && plan.kind !== 'page' && plan.source && plan.source !== info?.source
+      ? plan.source === 'gitee'
+        ? 'Gitee'
+        : 'GitHub'
+      : '';
+  // 分片的校验值写在对应源的发布说明里，镜像与主源的说明不能混用
+  const downloadNotes = info?.mirror?.notes || info?.notes;
 
   // 没有当前平台的安装包时（比如浏览器里打开），退化成「打开下载页」
   const fallbackUrl =
@@ -151,7 +162,7 @@ export function UpdatePanel({ onClose, onToast }: Props) {
       // parts：Gitee 的大安装包被切片，下载后拼接并校验
       // 清单文件在 Gitee 上没有 CORS（渲染层读不到），因此优先用清单、读不到就从发布说明里解析
       const manifest = await loadPartsManifest(plan.manifestUrl);
-      const sums = parseChecksums(info?.notes);
+      const sums = parseChecksums(downloadNotes);
       const expected =
         manifest ??
         (sums.exe
@@ -217,7 +228,11 @@ export function UpdatePanel({ onClose, onToast }: Props) {
                 <b className="num">v{info?.latest}</b>
                 <span className="num">
                   {sourceLabel && <span className="update-source">{sourceLabel}</span>}
+                  {downloadLabel && <span className="update-source">· 下载源 {downloadLabel}</span>}
                   {plan?.kind === 'single' && plan.asset.size > 0 ? ` · ${formatBytes(plan.asset.size)}` : ''}
+                  {plan?.kind === 'parts' && plan.parts.length > 0
+                    ? ` · ${plan.parts.length} 个分片`
+                    : ''}
                 </span>
               </div>
               {info?.publishedAt && (

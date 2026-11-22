@@ -149,7 +149,8 @@ docs/         安卓端设计稿（android-redesign.md 说明 + v0/ 源码与截
 
 | 版本 | 日期 | 主要变更 |
 | --- | --- | --- |
-| **1.2.4** | 2026-11-22 | 更新源改为「GitHub 优先、Gitee 兜底」：两个源自动切换，Gitee 上的大安装包按 90MB 分片发布，客户端下载后拼接并校验 SHA-256 |
+| **1.2.5** | 2026-11-22 | 修复 Windows「检查更新」的证书链错误（主进程改用 Chromium 网络栈走系统证书库，不关校验）；下载优先 Gitee 分片、检查仍走 GitHub（实测 29KB/s vs 2.1MB/s） |
+| 1.2.4 | 2026-11-22 | 更新源改为「GitHub 优先、Gitee 兜底」：两个源自动切换，Gitee 上的大安装包按 90MB 分片发布，客户端下载后拼接并校验 SHA-256 |
 | 1.2.3 | 2026-11-22 | 「检查更新」打开即自动检查、只留一个按钮；仓库地址与 Token 收进默认折叠的「高级设置」 |
 | 1.2.2 | 2026-11-22 | 桌面端新增「更多」入口（成本分档/参数自检/检查更新/恢复默认此前在 Windows 上进不去）；面板打开时冻结背后页面滚动 |
 | 1.2.1 | 2026-11-22 | 发布整理：Android 改用调试证书签名、文档不再描述演进来源；修正「同版本重装后收不到更新提示」（检查更新只认更高版本号）。无功能变更 |
@@ -160,21 +161,25 @@ docs/         安卓端设计稿（android-redesign.md 说明 + v0/ 源码与截
 
 完整更新公告见 [CHANGELOG.md](CHANGELOG.md)。
 
-- Android 包名 `com.coilbook.cost`，`versionCode 8` / `versionName 1.2.4`，使用调试证书签名（不提供正式签名证书）。
+- Android 包名 `com.coilbook.cost`，`versionCode 9` / `versionName 1.2.5`，使用调试证书签名（不提供正式签名证书）。
 - 桌面端从 1.0.0 / 1.1.x **可以直接覆盖安装**（1.2.0 起修复了旧卸载器导致的升级失败）。
-- 1.2.4 APK：8,001,836 字节，SHA-256 `A3F96F039A38658F38FC7F7BC00757A607D2E957C1028A4E67F24A1C5739F9E9`。
-- 1.2.4 安装包：149,529,126 字节，SHA-256 `21D839FC182BF5D508845026AFB98EBA77461BB31A298A48447A94D28AE57C52`。
-- 发布页（GitHub，优先）：<https://github.com/Neutron-Fair/Margin/releases/tag/v1.2.4>
-- 发布页（Gitee，备用）：<https://gitee.com/neutronfair/Margin/releases/tag/v1.2.4>
+- 1.2.5 APK：8,002,132 字节，SHA-256 `D2F77B736185A7E620768F4E8614D47F0CBF7DE4CAFD00C424975FA814DDE43B`。
+- 1.2.5 安装包：149,531,201 字节，SHA-256 `57ADE3CADE24271AAAD6DDED26245D05DD79BEE4D8B56295C3D908B80459E6DE`。
+- 发布页（GitHub，优先）：<https://github.com/Neutron-Fair/Margin/releases/tag/v1.2.5>
+- 发布页（Gitee，备用）：<https://gitee.com/neutronfair/Margin/releases/tag/v1.2.5>
 
 ## 更新源
 
 「更多 → 检查更新」默认先查 GitHub Release；GitHub 连不上时自动改用 Gitee 镜像，用户不需要做任何设置。
 
+**检查与下载分开走**：同一条网线实测（本机），GitHub 检查 0.2–1.6 秒、下载 150MB 却只有约 29 KB/s（85 分钟），Gitee 检查 0.2 秒、下载约 2.1 MB/s（75 秒）。所以检查仍走 GitHub（最快拿到最新版本），下载时若 Gitee 有**同版本**分片就自动用 Gitee，界面上会显示「下载源 Gitee」；两源版本不一致时不会用镜像（避免下到别的版本）。
+
+**出网通道**：主进程的检查与下载都优先走 Chromium 网络栈（Electron `net`，用 Windows 系统证书库），失败再退 Node `https`；渲染层还有一次 `fetch` 重试。原因是部分机器的 `api.github.com` 证书链缺中间证书，Node 内置 CA 包补不上（报 `unable to verify the first certificate`），而系统证书库是完整的——这条修复不关闭证书校验。
+
 | 源 | 用途 | 说明 |
 | --- | --- | --- |
-| GitHub `Neutron-Fair/Margin` | 优先 | 安装包单文件直接下载 |
-| Gitee `neutronfair/Margin` | 兜底 | 附件单文件上限 100MB，因此 Windows 安装包按 90MB 切成 `.part1/.part2`；客户端下载后拼接，并按发布说明里的 SHA-256 校验 |
+| GitHub `Neutron-Fair/Margin` | 检查优先 | 安装包单文件 |
+| Gitee `neutronfair/Margin` | 下载优先 / 兜底 | 附件单文件上限 100MB，因此 Windows 安装包按 90MB 切成 `.part1/.part2`；客户端下载后拼接，并按发布说明里的 SHA-256 校验 |
 
 发布两端用两个脚本：`tools/publish-release.ps1`（GitHub）、`tools/publish-gitee.ps1`（Gitee，自动切片 + 上传清单）。
 

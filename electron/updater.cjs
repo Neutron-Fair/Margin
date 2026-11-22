@@ -10,6 +10,37 @@ const UA = 'CoilBookCost-Updater';
 const DEFAULT_OWNER = 'Neutron-Fair';
 const DEFAULT_REPO = 'Margin';
 
+/**
+ * 出网通道怎么选：优先 Chromium 网络栈（electron.net），失败再退回 node:https。
+ *
+ * 为什么（2026-11-22 实测）：api.github.com 的证书链在 Node 内置 CA bundle 里缺中间证书，
+ * `https.request` 报 `unable to verify the first certificate`（提示 --use-system-ca），
+ * 而 `net.request` 用的是 Windows 系统证书库，同一时刻返回 200。
+ * 客户端用户机器不会装 Node 的额外 CA，所以必须走系统证书库，不能关校验。
+ *
+ * 单测里 electron 是替身（没有 net），这里惰性取，取不到就自动只用 https。
+ */
+function electronNet() {
+  try {
+    return require('electron').net;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 把底层网络错误翻译成用户能看懂的话（不要把裸 Node 报错丢到界面） */
+function friendlyNetError(e) {
+  const msg = String((e && e.message) || e || '');
+  if (/unable to verify the first certificate|unable to get local issuer|self.signed|CERT_|ERR_CERT/i.test(msg)) {
+    return 'TLS 证书校验失败（证书链不完整）';
+  }
+  if (/timeout|ETIMEDOUT/i.test(msg)) return '请求超时';
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(msg)) return '域名解析失败';
+  if (/ECONNREFUSED/i.test(msg)) return '连接被拒绝';
+  if (/ECONNRESET|EPIPE|socket hang up/i.test(msg)) return '连接被中断';
+  return msg || '未知网络错误';
+}
+
 /** 只接受来自 app://bundle 主框架的调用，与 secrets 桥同口径 */
 function isTrusted(event) {
   try {
@@ -43,7 +74,62 @@ function compareVersions(a, b) {
   return 0;
 }
 
-function requestJson(url, token, redirects = 0) {
+const NET_TIMEOUT_MS = 25000;
+const DOWNLOAD_IDLE_TIMEOUT_MS = 120000;
+
+/**
+ * Chromium 网络栈发 GET（走系统证书库与系统代理）。
+ * 结果与 https 版同构：{status, json, text}；真正的网络错误才 reject。
+ */
+function requestJsonViaNet(net, url, token) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    let req;
+    const timer = setTimeout(() => {
+      try {
+        req?.abort();
+      } catch {
+        /* ignore */
+      }
+      finish(reject, new Error('请求超时'));
+    }, NET_TIMEOUT_MS);
+
+    try {
+      req = net.request({ url, method: 'GET', redirect: 'follow' });
+    } catch (e) {
+      clearTimeout(timer);
+      return reject(e);
+    }
+    req.setHeader('User-Agent', UA);
+    req.setHeader('Accept', 'application/vnd.github+json');
+    if (token) req.setHeader('Authorization', `token ${token}`);
+    req.on('response', (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          /* 非 JSON 响应交给上层按状态码处理 */
+        }
+        finish(resolve, { status: res.statusCode, json, text });
+      });
+      res.on('error', (e) => finish(reject, e));
+    });
+    req.on('error', (e) => finish(reject, e));
+    req.end();
+  });
+}
+
+function requestJsonViaHttps(url, token, redirects = 0) {
   return new Promise((resolve, reject) => {
     const req = https.request(
       url,
@@ -60,7 +146,7 @@ function requestJson(url, token, redirects = 0) {
         const loc = res.headers.location;
         if (res.statusCode >= 300 && res.statusCode < 400 && loc && redirects < 3) {
           res.resume();
-          return resolve(requestJson(loc, token, redirects + 1));
+          return resolve(requestJsonViaHttps(loc, token, redirects + 1));
         }
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -82,7 +168,91 @@ function requestJson(url, token, redirects = 0) {
   });
 }
 
-function downloadFile(url, destPath, { token, onProgress, redirects = 0 } = {}) {
+/** 查 Release：先走系统证书库（net），失败再退回 Node 自带通道 */
+async function requestJson(url, token) {
+  const net = electronNet();
+  if (net) {
+    try {
+      return await requestJsonViaNet(net, url, token);
+    } catch {
+      /* 落到 https 再试一次 */
+    }
+  }
+  return requestJsonViaHttps(url, token);
+}
+
+/** Chromium 网络栈下载（断点/进度同 https 版） */
+function downloadViaNet(net, url, destPath, { token, onProgress } = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let received = 0;
+    let timer = null;
+    const clear = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    };
+    const fail = (e) => {
+      if (settled) return;
+      settled = true;
+      clear();
+      // 已收到数据的失败不重试（重下代价太大）
+      if (e && typeof e === 'object') e.received = received;
+      reject(e);
+    };
+    const idle = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        try {
+          req.abort();
+        } catch {
+          /* ignore */
+        }
+        fail(new Error('下载超时'));
+      }, DOWNLOAD_IDLE_TIMEOUT_MS);
+    };
+
+    let req;
+    try {
+      req = net.request({ url, method: 'GET', redirect: 'follow' });
+    } catch (e) {
+      return fail(e);
+    }
+    req.setHeader('User-Agent', UA);
+    req.setHeader('Accept', 'application/octet-stream');
+    // 跨域重定向时 Chromium 会自行剥掉 Authorization，等价于旧实现「302 后丢弃 token」
+    if (token) req.setHeader('Authorization', `token ${token}`);
+    idle();
+
+    req.on('response', (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        return fail(new Error(`下载失败（HTTP ${res.statusCode}）`));
+      }
+      const total = Number(res.headers['content-length'] || 0);
+      const out = fs.createWriteStream(destPath);
+      res.on('data', (c) => {
+        received += c.length;
+        idle();
+        onProgress?.(received, total);
+      });
+      res.on('error', fail);
+      out.on('error', fail);
+      res.pipe(out);
+      out.on('finish', () => {
+        out.close(() => {
+          if (settled) return;
+          settled = true;
+          clear();
+          resolve({ size: received, total });
+        });
+      });
+    });
+    req.on('error', fail);
+    req.end();
+  });
+}
+
+function downloadViaHttps(url, destPath, { token, onProgress, redirects = 0 } = {}) {
   return new Promise((resolve, reject) => {
     const req = https.request(
       url,
@@ -100,7 +270,7 @@ function downloadFile(url, destPath, { token, onProgress, redirects = 0 } = {}) 
         if (res.statusCode >= 300 && res.statusCode < 400 && loc && redirects < 5) {
           res.resume();
           // 对象存储的签名直链自带凭据，继续带 token 会被拒绝
-          return resolve(downloadFile(loc, destPath, { token: '', onProgress, redirects: redirects + 1 }));
+          return resolve(downloadViaHttps(loc, destPath, { token: '', onProgress, redirects: redirects + 1 }));
         }
         if (res.statusCode !== 200) {
           res.resume();
@@ -122,6 +292,22 @@ function downloadFile(url, destPath, { token, onProgress, redirects = 0 } = {}) 
     req.on('error', reject);
     req.end();
   });
+}
+
+/** 下载安装包：同样优先系统证书库；net 在连接阶段就失败时退回 https */
+async function downloadFile(url, destPath, opts = {}) {
+  const net = electronNet();
+  if (net) {
+    try {
+      return await downloadViaNet(net, url, destPath, opts);
+    } catch (e) {
+      const partial = Number(e && e.received) || 0;
+      fs.rmSync(destPath, { force: true });
+      if (partial > 0) throw e;
+      return downloadViaHttps(url, destPath, opts);
+    }
+  }
+  return downloadViaHttps(url, destPath, opts);
 }
 
 function sha256File(filePath) {
@@ -179,11 +365,21 @@ function registerUpdater() {
     const owner = String(opts.owner || DEFAULT_OWNER).trim();
     const repo = String(opts.repo || DEFAULT_REPO).trim();
     const token = typeof opts.token === 'string' ? opts.token.trim() : '';
-    if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) return { ok: false, reason: 'bad-source' };
-
     const current = app.getVersion();
+    if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) return { ok: false, reason: 'bad-source', current };
+
     const url = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
-    const res = await requestJson(url, token);
+    let res;
+    try {
+      res = await requestJson(url, token);
+    } catch (e) {
+      /*
+       * 不把裸 Node 错误抛给渲染层：旧版 UI（1.2.2/1.2.3）没有 catch，
+       * 会直接把「Error invoking remote method 'updater:check' …」弹到界面上。
+       * 统一转成结构化结果 + 人话 detail，使渲染层可以退 Gitee 或提示原因。
+       */
+      return { ok: false, reason: 'network', current, detail: friendlyNetError(e) };
+    }
     if (res.status === 401 || res.status === 403) return { ok: false, reason: 'auth', current };
     if (res.status === 404) return { ok: false, reason: 'not-found', current };
     if (res.status !== 200 || !res.json) return { ok: false, reason: `http-${res.status}`, current };
@@ -225,12 +421,17 @@ function registerUpdater() {
     const dest = path.join(dir, name.replace(/[^\w.\- ]+/g, '_'));
 
     const sender = event.sender;
-    const result = await downloadFile(apiUrl, dest, {
-      token,
-      onProgress: (received, total) => {
-        if (!sender.isDestroyed()) sender.send('updater:progress', { received, total });
-      },
-    });
+    let result;
+    try {
+      result = await downloadFile(apiUrl, dest, {
+        token,
+        onProgress: (received, total) => {
+          if (!sender.isDestroyed()) sender.send('updater:progress', { received, total });
+        },
+      });
+    } catch (e) {
+      throw new Error(friendlyNetError(e));
+    }
 
     const stat = fs.statSync(dest);
     if (stat.size < 1024) throw new Error('下载的安装包不完整');
@@ -271,12 +472,16 @@ function registerUpdater() {
     for (let i = 0; i < urls.length; i += 1) {
       const dest = path.join(dir, `${safe}.part${i + 1}`);
       const base = received;
-      await downloadFile(urls[i], dest, {
-        token: '',
-        onProgress: (n) => {
-          if (!sender.isDestroyed()) sender.send('updater:progress', { received: base + n, total });
-        },
-      });
+      try {
+        await downloadFile(urls[i], dest, {
+          token: '',
+          onProgress: (n) => {
+            if (!sender.isDestroyed()) sender.send('updater:progress', { received: base + n, total });
+          },
+        });
+      } catch (e) {
+        throw new Error(`第 ${i + 1} 个分片：${friendlyNetError(e)}`);
+      }
       const st = fs.statSync(dest);
       if (st.size < 1024) throw new Error(`第 ${i + 1} 个分片下载不完整`);
       received = base + st.size;
@@ -327,4 +532,12 @@ function registerUpdater() {
   });
 }
 
-module.exports = { registerUpdater, compareVersions, mergeParts, sha256File };
+module.exports = {
+  registerUpdater,
+  compareVersions,
+  mergeParts,
+  sha256File,
+  friendlyNetError,
+  // 仅用于诊断脚本（tools/probe-*.cjs）：验证证书链与下载链路，不参与业务
+  _internals: { requestJson, downloadFile, electronNet },
+};

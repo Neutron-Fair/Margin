@@ -13,7 +13,7 @@ Module._load = function (name, ...args) {
   if (name === 'electron') return { app: { getPath: () => os.tmpdir() }, ipcMain: { handle() {} } };
   return oldLoad.call(this, name, ...args);
 };
-const { mergeParts, sha256File } = require('./updater.cjs');
+const { mergeParts, sha256File, friendlyNetError } = require('./updater.cjs');
 Module._load = oldLoad;
 
 function makeParts(dir, sizes) {
@@ -96,4 +96,17 @@ test('sha256File 与 crypto 计算结果一致', async () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// 证书链不完整时用户看到的是裸 Node 报错（2026-11-22 线上），必须翻译成人话
+test('网络错误被翻译成可读文案', () => {
+  assert.match(
+    friendlyNetError(new Error('unable to verify the first certificate; if the root CA is installed locally')),
+    /TLS 证书校验失败/,
+  );
+  assert.match(friendlyNetError(new Error('connect ETIMEDOUT 20.205.243.168:443')), /请求超时/);
+  assert.match(friendlyNetError(new Error('getaddrinfo ENOTFOUND api.github.com')), /域名解析失败/);
+  assert.match(friendlyNetError(new Error('read ECONNRESET')), /连接被中断/);
+  // 不认识的错误原样透出，不要吞掉信息
+  assert.equal(friendlyNetError(new Error('下载失败（HTTP 500）')), '下载失败（HTTP 500）');
 });

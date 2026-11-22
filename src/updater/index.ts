@@ -39,6 +39,19 @@ export interface UpdateResult {
   htmlUrl?: string;
   /** 这次结果实际来自哪个源 */
   source?: UpdateSourceKind;
+  /** 失败时的诊断补充（主进程已翻译成人话，例如「TLS 证书校验失败（证书链不完整）」） */
+  detail?: string;
+  /**
+   * 同版本的另一个下载源（检查用 GitHub 拿到最新，下载优先用它）。
+   * 实测：本机到 GitHub Release 只有 ~29KB/s，Gitee 有 ~2.1MB/s，
+   * 149MB 的包一个要 85 分钟、一个 90 秒，所以下载不该跟着检查源走。
+   */
+  mirror?: {
+    source: UpdateSourceKind;
+    assets: UpdateAsset[];
+    htmlUrl: string;
+    notes?: string;
+  };
 }
 
 export interface UpdateSource {
@@ -60,11 +73,17 @@ export interface PartsManifest {
   parts: Array<{ name: string; size: number }>;
 }
 
-/** 安装方式：单包 / 分片 / 只能去网页 */
+/** 安装方式：单包 / 分片 / 只能去网页；source 表示这个包会从哪个源下载 */
 export type InstallPlan =
-  | { kind: 'single'; asset: UpdateAsset }
-  | { kind: 'parts'; parts: UpdateAsset[]; manifestUrl?: string; htmlUrl: string }
-  | { kind: 'page'; htmlUrl: string };
+  | { kind: 'single'; asset: UpdateAsset; source?: UpdateSourceKind }
+  | {
+      kind: 'parts';
+      parts: UpdateAsset[];
+      manifestUrl?: string;
+      htmlUrl: string;
+      source?: UpdateSourceKind;
+    }
+  | { kind: 'page'; htmlUrl: string; source?: UpdateSourceKind };
 
 export const DEFAULT_SOURCE: UpdateSource = { owner: 'Neutron-Fair', repo: 'Margin' };
 
@@ -160,8 +179,13 @@ async function fetchGithubRelease(src: UpdateSource, token: string, current: str
         ...(token ? { Authorization: `token ${token}` } : {}),
       },
     });
-  } catch {
-    return { ok: false, reason: 'network', current };
+  } catch (e) {
+    return {
+      ok: false,
+      reason: 'network',
+      current,
+      detail: e instanceof Error ? e.message : undefined,
+    };
   }
   if (res.status === 401 || res.status === 403) return { ok: false, reason: 'auth', current };
   if (res.status === 404) return { ok: false, reason: 'not-found', current };
@@ -197,8 +221,13 @@ async function fetchGiteeRelease(src: UpdateSource, current: string): Promise<Up
   let res: Response;
   try {
     res = await fetch(url, { headers: { Accept: 'application/json' } });
-  } catch {
-    return { ok: false, reason: 'network', current };
+  } catch (e) {
+    return {
+      ok: false,
+      reason: 'network',
+      current,
+      detail: e instanceof Error ? e.message : undefined,
+    };
   }
   if (res.status === 404) return { ok: false, reason: 'not-found', current };
   if (!res.ok) return { ok: false, reason: `http-${res.status}`, current };
@@ -243,17 +272,53 @@ export async function checkForUpdate(sources: UpdateSources | UpdateSource, toke
 
   let gh: UpdateResult;
   if (d) {
-    // 桌面端由主进程代发 GitHub 请求（避免渲染层 CORS/证书差异）
+    // 桌面端优先由主进程代发（它能带 token、能拿 assets.apiUrl，也不受 CORS 限制）
+    let fromMain: UpdateResult | undefined;
     try {
-      gh = await d.check({ owner: both.github.owner, repo: both.github.repo, token });
-      gh = { ...gh, source: 'github' };
+      fromMain = await d.check({ owner: both.github.owner, repo: both.github.repo, token });
+      if (fromMain) fromMain = { ...fromMain, source: 'github' };
     } catch {
-      gh = { ok: false, reason: 'network', current };
+      // 旧版主进程会把裸 IPC 错误抛上来，按「主进程没拿到」处理
+      fromMain = undefined;
+    }
+
+    if (fromMain?.ok) {
+      gh = fromMain;
+    } else if (!fromMain || fromMain.reason === 'network') {
+      /*
+       * 主进程没连上时在渲染层重试一次：主进程的 Node 栈用 Node 内置 CA bundle，
+       * 本机可能缺中间证书（unable to verify the first certificate）；
+       * 渲染层走 Chromium 网络栈，用 Windows 系统证书库，通常能过。
+       */
+      const viaRenderer = await fetchGithubRelease(both.github, token, current);
+      gh = viaRenderer.ok ? viaRenderer : fromMain || viaRenderer;
+    } else {
+      gh = fromMain;
     }
   } else {
     gh = await fetchGithubRelease(both.github, token, current);
   }
-  if (gh.ok) return gh;
+  if (gh.ok) {
+    /*
+     * GitHub 通了也顺手问一次 Gitee：把它的资产挂成 mirror 供「下载」用。
+     *
+     * 为什么不让下载跟着检查源：实测本机 到 GitHub Release 约 29KB/s、
+     * Gitee 约 2.1MB/s（149MB 包：85 分钟 vs 90 秒）。检查走 GitHub 拿最新，
+     * 下载走 Gitee 才符合实际体验。
+     *
+     * 版本必须「严格相等」才挂镜像：若 Gitee 比 GitHub 新，用它的资产会出现
+     * 「提示 v1.2.4、实际下载 v1.2.5」的错配。
+     */
+    try {
+      const gt = await fetchGiteeRelease(both.gitee, current);
+      if (gt.ok && compareVersions(String(gt.latest || '0'), String(gh.latest || '0')) === 0) {
+        gh.mirror = { source: 'gitee', assets: gt.assets ?? [], htmlUrl: gt.htmlUrl || '', notes: gt.notes };
+      }
+    } catch {
+      /* 拿不到镜像不影响检查结果，只是下载仍回落到 GitHub */
+    }
+    return gh;
+  }
 
   // GitHub 不可用（网络/限流/仓库异常）→ 退到 Gitee
   const gt = await fetchGiteeRelease(both.gitee, current);
@@ -268,11 +333,30 @@ function partIndex(name: string): number {
 
 /**
  * 决定怎么装：单包直下 / 分片拼接 / 只能去网页。
- * 分片是 Gitee 的产物（附件上限 100MB），GitHub 上永远是单包。
+ *
+ * 顺序按「源」而不是按「包形态」排：mirror（Gitee，快）整池优先，
+ * 只有它没货时才用检查源的资产（GitHub 单包，实测下载很慢）。
  */
 export function planInstall(result: UpdateResult): InstallPlan {
-  const assets = result.assets ?? [];
-  const htmlUrl = result.htmlUrl || '';
+  const pools: Array<{ assets: UpdateAsset[]; htmlUrl: string; source?: UpdateSourceKind }> = [];
+  if (result.mirror) {
+    pools.push({
+      assets: result.mirror.assets ?? [],
+      htmlUrl: result.mirror.htmlUrl || result.htmlUrl || '',
+      source: result.mirror.source,
+    });
+  }
+  pools.push({ assets: result.assets ?? [], htmlUrl: result.htmlUrl || '', source: result.source });
+
+  for (const pool of pools) {
+    const plan = pickFromPool(pool.assets, pool.htmlUrl);
+    if (plan.kind !== 'page') return { ...plan, source: pool.source };
+  }
+  return { kind: 'page', htmlUrl: result.mirror?.htmlUrl || result.htmlUrl || '', source: result.source };
+}
+
+/** 单池内挑包：有单包就单包，否则看分片，都没有就交回网页 */
+function pickFromPool(assets: UpdateAsset[], htmlUrl: string): InstallPlan {
   if (isDesktop()) {
     const exe = assets.find((a) => /\.exe$/i.test(a.name));
     if (exe) return { kind: 'single', asset: exe };
