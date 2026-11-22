@@ -18,6 +18,10 @@ param(
   [string]$Owner = 'neutronfair',
   [string]$Repo = 'Margin',
   [int]$PartSizeMB = 90,
+  # Gitee 单仓库附件总量 1GB，每版占 ~142MB，所以只保留最近 N 个版本的 Release
+  [int]$KeepVersions = 3,
+  # 只执行清理（不重传附件），用于日常腾空间
+  [switch]$PruneOnly,
   [switch]$DryRun
 )
 
@@ -103,8 +107,47 @@ function Split-Installer {
   return $parts
 }
 
+function ConvertTo-VersionTuple([string]$tag) {
+  $m = [regex]::Match([string]$tag, '(\d+)\.(\d+)\.(\d+)')
+  if (-not $m.Success) { return [version]'0.0.0' }
+  return [version]::new([int]$m.Groups[1].Value, [int]$m.Groups[2].Value, [int]$m.Groups[3].Value)
+}
+
+# 只保留版本号最大的 $Keep 个 Release，更早的整个删除（tag 与代码不受影响）
+function Remove-OldReleases {
+  param([string]$Token, [int]$Keep)
+  if ($Keep -lt 1) { Write-Output 'PRUNE skipped（-KeepVersions 小于 1）'; return }
+  $all = @()
+  for ($page = 1; $page -le 5; $page++) {
+    $chunk = Invoke-Gitee -Method Get -Path "/releases?access_token=$Token&per_page=100&page=$page" -Token $Token
+    if (-not $chunk) { break }
+    $all += @($chunk)
+    if (@($chunk).Count -lt 100) { break }
+  }
+  if ($all.Count -eq 0) { Write-Output 'PRUNE 没有 Release'; return }
+  $sorted = @($all | Sort-Object { ConvertTo-VersionTuple $_.tag_name } -Descending)
+  $drop = @($sorted | Select-Object -Skip $Keep)
+  Write-Output ("PRUNE 共 {0} 个 Release，保留 {1} 个，待删 {2} 个：{3}" -f $sorted.Count, $Keep, $drop.Count, (($sorted | Select-Object -First $Keep | ForEach-Object { $_.tag_name }) -join ', '))
+  if ($drop.Count -eq 0) { Write-Output 'PRUNE 无需删除'; return }
+  foreach ($r in $drop) {
+    Write-Output ("PRUNE_DELETE tag={0} id={1}" -f $r.tag_name, $r.id)
+    if ($DryRun) { continue }
+    try {
+      $null = Invoke-Gitee -Method Delete -Path "/releases/$($r.id)?access_token=$Token" -Token $Token
+      Write-Output ("  deleted {0}" -f $r.tag_name)
+    } catch {
+      Write-Output ("  WARN 删除 {0} 失败：{1}" -f $r.tag_name, $_.Exception.Message)
+    }
+  }
+}
 $token = Get-Token
 Write-Output "AUTH ok（token $($token.Length) 字符）"
+
+if ($PruneOnly) {
+  Remove-OldReleases -Token $token -Keep $KeepVersions
+  Write-Output 'DONE (prune only)'
+  exit 0
+}
 
 if (-not $Title) { $Title = "$Tag" }
 
@@ -202,5 +245,7 @@ foreach ($f in $uploads) {
     throw "上传失败：$name"
   }
 }
+
+Remove-OldReleases -Token $token -Keep $KeepVersions
 
 Write-Output 'DONE'

@@ -178,6 +178,9 @@ docs/         安卓端设计稿（android-redesign.md 说明 + v0/ 源码与截
 
 发布两端用两个脚本：`tools/publish-release.ps1`（GitHub）、`tools/publish-gitee.ps1`（Gitee，自动切片 + 上传清单）。
 
+**GitHub 保留全部历史版本**；Gitee 的单仓库附件总量只有 1GB（每版约 142MB 分片），所以 Gitee 发布脚本会**自动只保留最近 3 个版本的 Release**（按版本号排序，`-KeepVersions N` 可调），被清掉的只是 Release 记录与附件，**tag 与代码都还在**，老版本仍可从 GitHub 下载。
+只清理不发布：`pwsh -File tools/publish-gitee.ps1 -Tag v1.2.4 -NotesFile <任意> -PruneOnly`。
+
 ## 已知限制
 
 - Windows 安装包**未做代码签名**，首次运行可能被 SmartScreen 提示。
