@@ -32,6 +32,11 @@ export function QtyInput({ value, onChange, onValidityChange }: Props) {
       onChange={(e) => {
         const raw = e.target.value;
         setText(raw);
+        // 清空是重输的中间态：沿用上一个有效数量，不锁死报价（见 Field.tsx 同处说明）
+        if (raw.trim() === '') {
+          onValidityChange?.('orderQty', true);
+          return;
+        }
         const n = Number(raw);
         const valid = /^\d+$/.test(raw) && Number.isSafeInteger(n) && n > 0;
         onValidityChange?.('orderQty', valid);

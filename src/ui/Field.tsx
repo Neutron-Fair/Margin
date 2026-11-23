@@ -62,6 +62,18 @@ export function Field({ def, value, onChange, onValidityChange }: FieldProps) {
             const raw = e.target.value;
             setText(raw);
             const trimmed = raw.trim();
+            /*
+             * 清空是「正在重输」的中间态：不提交新值，也不把报价锁死。
+             *
+             * 2026-11-23 修正：以前空字符串被判为无效输入 → 整页暂停报价，
+             * 而且「清空 → 再填有效值」会触发回退提示，必须手动点「已核对数值」
+             * 才能恢复。用户视角就是「我把一个数删掉，报价就卡住 / 算错了」。
+             * 现在空的字段沿用上一个有效值继续算，失焦时再把显示归位。
+             */
+            if (trimmed === '') {
+              onValidityChange?.(def.path, true);
+              return;
+            }
             const n = Number(trimmed);
             const min = def.min ?? (def.path.endsWith('.imposition') ? 1 : 0);
             const integer = /\.(sheets|sheetsPerBook|imposition|wasteSheets|coilsPerBook)$/.test(def.path);

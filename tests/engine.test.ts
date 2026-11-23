@@ -125,6 +125,35 @@ test('衬纸默认值参与总成本', () => {
   assert.ok(a.modules.liner.perBook > 0, '衬纸每本应有成本');
 });
 
+test('张数为 0 = 该部件不存在：纸、上机费、备损印张、后工艺全部不计', () => {
+  // 2026-11-23 回归：以前只把纸张算 0，衬纸仍收 ¥0.0612/本（上机费+备损印张），
+  // 用户看到的是「删掉衬纸报价还带着这笔钱」。
+  const liner = cloneDefaultParams();
+  liner.liner.sheets = 0;
+  const rl = calcOrder(liner);
+  assert.equal(rl.modules.liner.perBook, 0, '衬纸清零后每本应为 0');
+  assert.equal(rl.modules.liner.detail.printCost, 0, '衬纸清零后上机费与备损费应为 0');
+  assert.equal(rl.modules.liner.detail.finalSheets, 0);
+  // 回到原始 cs.md 基准（这条正是「关闭衬纸」的那组数）
+  close(rl.costTotal, 3579.95512, 1e-5, '衬纸清零后总成本');
+  assert.equal(rl.unitCost.toFixed(4), '3.5800');
+
+  // 封面清零时后工艺（覆膜）也要一起消失
+  const cover = cloneDefaultParams();
+  cover.cover.sheets = 0;
+  const rc = calcOrder(cover);
+  assert.equal(rc.modules.cover.perBook, 0, '封面清零后每本应为 0');
+  assert.equal(rc.modules.cover.detail.laminate, 0, '封面不要了，覆膜不该继续收');
+  assert.equal(rc.modules.cover.detail.printCost, 0);
+
+  // 上机费写成多少都不影响（张数 0 就不进这条计价）
+  const still = cloneDefaultParams();
+  still.liner.sheets = 0;
+  still.liner.setupFee = 999;
+  still.liner.pricePerPrint = 9;
+  close(calcOrder(still).costTotal, rl.costTotal, 1e-9, '张数 0 后上机费多少都不该影响');
+});
+
 test('封面工艺开关：关闭时后工艺为 0', () => {
   const p = cloneDefaultParams();
   p.cover.laminate = false;

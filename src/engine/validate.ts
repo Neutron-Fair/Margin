@@ -167,7 +167,7 @@ export function validateParams(params: OrderParams): Issue[] {
       level: 'error',
       code: 'inner-sheets',
       title: '内页每本张数为 0',
-      detail: '内页成本将只剩印刷费，报价会严重偏低。',
+      detail: '内页整块不计入报价（纸与印刷都是 0），报价会严重偏低。要算内页请填大于 0 的张数。',
       field: 'inner.sheets',
     });
   }

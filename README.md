@@ -149,7 +149,8 @@ docs/         安卓端设计稿（android-redesign.md 说明 + v0/ 源码与截
 
 | 版本 | 日期 | 主要变更 |
 | --- | --- | --- |
-| **1.2.5** | 2026-11-22 | 修复 Windows「检查更新」的证书链错误（主进程改用 Chromium 网络栈走系统证书库，不关校验）；下载优先 Gitee 分片、检查仍走 GitHub（实测 29KB/s vs 2.1MB/s） |
+| **1.2.6** | 2026-11-23 | 修复两处输入处理导致「报价算错」的体验：删空任意输入不再让整页暂停报价；「每本张数」填 0 时该部件整块不计（不再残留上机费与备损费） |
+| 1.2.5 | 2026-11-22 | 修复 Windows「检查更新」的证书链错误（主进程改用 Chromium 网络栈走系统证书库，不关校验）；下载优先 Gitee 分片、检查仍走 GitHub（实测 29KB/s vs 2.1MB/s） |
 | 1.2.4 | 2026-11-22 | 更新源改为「GitHub 优先、Gitee 兜底」：两个源自动切换，Gitee 上的大安装包按 90MB 分片发布，客户端下载后拼接并校验 SHA-256 |
 | 1.2.3 | 2026-11-22 | 「检查更新」打开即自动检查、只留一个按钮；仓库地址与 Token 收进默认折叠的「高级设置」 |
 | 1.2.2 | 2026-11-22 | 桌面端新增「更多」入口（成本分档/参数自检/检查更新/恢复默认此前在 Windows 上进不去）；面板打开时冻结背后页面滚动 |
@@ -161,12 +162,12 @@ docs/         安卓端设计稿（android-redesign.md 说明 + v0/ 源码与截
 
 完整更新公告见 [CHANGELOG.md](CHANGELOG.md)。
 
-- Android 包名 `com.coilbook.cost`，`versionCode 9` / `versionName 1.2.5`，使用调试证书签名（不提供正式签名证书）。
+- Android 包名 `com.coilbook.cost`，`versionCode 10` / `versionName 1.2.6`，使用调试证书签名（不提供正式签名证书）。
 - 桌面端从 1.0.0 / 1.1.x **可以直接覆盖安装**（1.2.0 起修复了旧卸载器导致的升级失败）。
-- 1.2.5 APK：8,002,132 字节，SHA-256 `D2F77B736185A7E620768F4E8614D47F0CBF7DE4CAFD00C424975FA814DDE43B`。
-- 1.2.5 安装包：149,531,201 字节，SHA-256 `57ADE3CADE24271AAAD6DDED26245D05DD79BEE4D8B56295C3D908B80459E6DE`。
-- 发布页（GitHub，优先）：<https://github.com/Neutron-Fair/Margin/releases/tag/v1.2.5>
-- 发布页（Gitee，备用）：<https://gitee.com/neutronfair/Margin/releases/tag/v1.2.5>
+- 1.2.6 APK：8,002,296 字节，SHA-256 `34A00824BF71374149B878F906E7F3616179DE91A932AE2AEADABD418A05D1F1`。
+- 1.2.6 安装包：149,531,276 字节，SHA-256 `595C3D55096BD42C30FEB10C2DA1EB95A49E039302686AF3356387009903CAE3`。
+- 发布页（GitHub，优先）：<https://github.com/Neutron-Fair/Margin/releases/tag/v1.2.6>
+- 发布页（Gitee，备用）：<https://gitee.com/neutronfair/Margin/releases/tag/v1.2.6>
 
 ## 更新源
 

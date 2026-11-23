@@ -86,7 +86,7 @@ export const MODULES: ModuleDef[] = [
     desc: '纸张 + 印刷 · 算法同内页',
     kind: 'plain',
     fields: paperFields('liner'),
-    footNote: '衬纸算法与内页完全一致；不需要时把每本张数、上机费、印工单价清零即可。',
+    footNote: '衬纸算法与内页完全一致；不要衬纸时把「每本张数」填 0，整块（纸 + 上机费 + 备损）都不计。',
   },
   {
     id: 'cover',
@@ -114,7 +114,7 @@ export const MODULES: ModuleDef[] = [
         priceStep: 0.01,
       },
     ],
-    footNote: '烫金 / UV 按手计价：每手本数 = 订单数 ÷ 拼版数。',
+    footNote: '烫金 / UV 按手计价：每手本数 = 订单数 ÷ 拼版数。「每本张数」填 0 时整块（含后工艺）不计。',
   },
   {
     id: 'back',
@@ -142,7 +142,7 @@ export const MODULES: ModuleDef[] = [
         priceStep: 0.01,
       },
     ],
-    footNote: '封底与封面算法一致，单价通常更低。',
+    footNote: '封底与封面算法一致，单价通常更低；「每本张数」填 0 时整块不计。',
   },
   {
     id: 'gray',
@@ -158,7 +158,7 @@ export const MODULES: ModuleDef[] = [
       { path: 'gray.sheetsPerBook', label: '每本块数', unit: '块', step: 1 },
       { path: 'gray.paperWaste', label: '纸张损耗', unit: '%', step: 0.5, digits: 2 },
     ],
-    footNote: '灰板只算纸张：张价 × 每本块数 × (1 + 损耗)。',
+    footNote: '灰板只算纸张：张价 × 每本块数 × (1 + 损耗)；每本块数填 0 即不计。',
   },
   {
     id: 'misc',

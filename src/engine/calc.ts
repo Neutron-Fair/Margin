@@ -88,6 +88,36 @@ function emptyProcessDetail(): Pick<
   return { laminate: 0, foil: 0, uv: 0, baseSheets: 0 };
 }
 
+/**
+ * 「每本张数为 0」= 这个部件不存在（比如不要衬纸），整块不计。
+ *
+ * 2026-11-23 修正：以前只把「纸张」按 0 算，上机费与备损印张照旧计入
+ * （衬纸清零后每本仍收 ¥0.0612、内页清零后仍收 ¥0.0848），用户看到的是
+ * 「我已经删掉了，报价还是有这笔钱」。张数为 0 时纸、印刷、后工艺应当全为 0。
+ */
+function emptyModuleResult(orderQty: number, sheetCostValue = 0): ModuleResult {
+  return {
+    paperPerBook: 0,
+    printPerBook: 0,
+    processPerBook: 0,
+    perBook: 0,
+    orderTotal: 0,
+    detail: {
+      sheetCost: sheetCostValue,
+      paperWithWaste: 0,
+      finalSheets: 0,
+      impressions: 0,
+      printCost: 0,
+      ...emptyProcessDetail(),
+    },
+  };
+}
+
+/** 该纸模块是否参与计价（每本张数 > 0） */
+function hasSheets(sheets: number): boolean {
+  return num(sheets, 0) > 0;
+}
+
 function buildModuleResult(
   base: PaperPrintResult,
   orderQty: number,
@@ -112,19 +142,21 @@ function buildModuleResult(
   };
 }
 
-/** 内页 / 衬纸：只算纸张 + 印刷 */
+/** 内页 / 衬纸：只算纸张 + 印刷；张数为 0 表示不要这个部件 */
 export function calcPlainModule(p: PaperModuleParams, orderQty: number): ModuleResult {
   const qty = safeQty(orderQty);
+  if (!hasSheets(p.sheets)) return emptyModuleResult(qty, sheetCost(p.len, p.wid, p.gram, p.ton));
   const base = calcPaperPrint(p, qty);
   return buildModuleResult(base, qty, { total: 0, detail: emptyProcessDetail() });
 }
 
-/** 封面 / 封底：纸张 + 印刷 + 覆膜/烫金/UV */
+/** 封面 / 封底：纸张 + 印刷 + 覆膜/烫金/UV；张数为 0 时整块（含后工艺）不计 */
 export function calcProcessModule(
   p: PaperModuleParams & ProcessParams,
   orderQty: number,
 ): ModuleResult {
   const qty = safeQty(orderQty);
+  if (!hasSheets(p.sheets)) return emptyModuleResult(qty, sheetCost(p.len, p.wid, p.gram, p.ton));
   const base = calcPaperPrint(p, qty);
   const detail = emptyProcessDetail();
   const imposition = Math.max(1, num(p.imposition, 1));
